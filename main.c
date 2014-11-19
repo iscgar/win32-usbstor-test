@@ -1,5 +1,5 @@
 #include <windows.h>
-#include <devguid.h>    // for GUID_DEVINTERFACE_DISK
+#include <initguid.h>
 #include <setupapi.h>
 #include <cfgmgr32.h>   // for MAX_DEVICE_ID_LEN
 #include <tchar.h>
@@ -8,8 +8,12 @@
 #define FRIENDLY_NAME_MAX	(100)
 #define ARRAY_SIZE(arr)     (sizeof(arr)/sizeof(arr[0]))
 
-#pragma comment (lib, "setupapi.lib")
-#pragma warning (disable : 4996)
+#ifdef _MSC_VER
+#	pragma comment (lib, "setupapi.lib")
+#	pragma warning (disable : 4996)
+#endif
+
+DEFINE_GUID(GUID_DEVINTERFACE_DISK, 0x53f56307L, 0xb6bf, 0x11d0, 0x94, 0xf2, 0x00, 0xa0, 0xc9, 0x1e, 0xfb, 0x8b);
 
 struct volume_node
 {
@@ -22,6 +26,7 @@ struct volume_node
 
 struct usbstor_node
 {
+	BOOL is_writable;
 	DWORD dev_num;
 	DWORD disk_id;
 	LONGLONG total_bytes;
@@ -119,7 +124,9 @@ static void trim_node(struct usbstor_list *lst)
 		else
 		{
 			while (cur_node->next->next)
-				;
+			{
+				cur_node = cur_node->next;
+			}
 
 			lst->tail = cur_node;
 			cur_node = cur_node->next;
@@ -239,7 +246,7 @@ static int populate_USBSTOR_list(struct usbstor_list *lst)
 
 			/* Try to get the device's friendly name. Skip if we fail because of non-insufficient-buffer error */
 			if (SetupDiGetDeviceRegistryProperty(dev_handle, &dev_info_data, SPDRP_FRIENDLYNAME, &prop_reg_type,
-												  (BYTE*)str_buff, sizeof(str_buff), NULL))
+												 (BYTE*)str_buff, sizeof(str_buff), NULL))
 			{
 				int should_append_ellipsis = FALSE;
 				size_t len = _tcslen(str_buff);
@@ -293,9 +300,9 @@ static int populate_USBSTOR_list(struct usbstor_list *lst)
 				else
 				{
 					/* Try to get disk handle in order to get the device number */
-					HANDLE disk_handle = CreateFile(dev_int_detail_ptr->DevicePath, 
+					HANDLE disk_handle = CreateFile(dev_int_detail_ptr->DevicePath,
 													FILE_READ_ATTRIBUTES,
-													FILE_SHARE_READ | FILE_SHARE_WRITE, 
+													FILE_SHARE_READ | FILE_SHARE_WRITE,
 													NULL, OPEN_EXISTING, 0, NULL);
 
 					/* Skip if we can't get the device number */
@@ -325,7 +332,7 @@ static int populate_USBSTOR_list(struct usbstor_list *lst)
 							bytes_returned = 0;
 							cur_node->total_bytes = storage_geometry->DiskSize.QuadPart;
 
-							/* Get the disk signature if the device layout is MBR 
+							/* Get the disk signature if the device layout is MBR
 							 * Otherwise, we'll have to randomly set it if we are to use IOCTL_DISK_SET_DRIVE_LAYOUT */
 							if (geometry_part_info->PartitionStyle == PARTITION_STYLE_MBR)
 							{
@@ -343,6 +350,9 @@ static int populate_USBSTOR_list(struct usbstor_list *lst)
 							{
 								cur_node->dev_num = storage_device_num.DeviceNumber;
 								_tcscpy(cur_node->dev_path, dev_int_detail_ptr->DevicePath);
+
+								/* Try to check if the device is writable (assume not) */
+								cur_node->is_writable = DeviceIoControl(disk_handle, IOCTL_DISK_IS_WRITABLE, NULL, 0, NULL, 0, &bytes_returned, NULL);
 							}
 						}
 
@@ -469,8 +479,8 @@ static int map_USBSTOR_mounts(struct usbstor_list *lst)
 
 int _tmain()
 {
-	usbstor_list lst;
-	const usbstor_node *cur_node;
+	struct usbstor_list lst;
+	const struct usbstor_node *cur_node;
 
 	init_list(&lst);
 
@@ -488,6 +498,7 @@ int _tmain()
 		{
 			_tprintf(TEXT("%s\n"), cur_node->dev_id);
 			_tprintf(TEXT("    Device Number: %d\n"), cur_node->dev_num);
+			_tprintf(TEXT("    Device Writable: %s\n"), cur_node->is_writable ? TEXT("Yes") : TEXT("No"));
 			_tprintf(TEXT("    Device Disk ID: 0x%.8x\n"), cur_node->disk_id);
 			_tprintf(TEXT("    Device Friendly Name: \"%s\"\n"), cur_node->friendly_name);
 			_tprintf(TEXT("    Device Path: \"%s\"\n"), cur_node->dev_path);
@@ -506,8 +517,8 @@ int _tmain()
 							 cur_volume->volume_name[0] == '\0' ? TEXT("Local Disk") : cur_volume->volume_name,
 							 cur_volume->mount_point);
 					_tprintf(TEXT("      Total: %.2fGB\n"), cur_volume->total_bytes / 1073741824.0f);
-					_tprintf(TEXT("      Free: %.2fGB (%.2f%%)\n"), 
-							 cur_volume->free_bytes / 1073741824.0f, 
+					_tprintf(TEXT("      Free: %.2fGB (%.2f%%)\n"),
+							 cur_volume->free_bytes / 1073741824.0f,
 							 100 * ((double)cur_volume->free_bytes / cur_volume->total_bytes));
 
 					cur_volume = cur_volume->next;
