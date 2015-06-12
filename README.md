@@ -1,4 +1,6 @@
-keepod-win-installer
-====================
+Windows USBSTOR Devices Detector
+================================
 
-Windows Installer for Keepod OS (https://github.com/keepod)
+Experimental code for detecting USBSTOR devices on Windows
+and mapping their mount points. Currently does nothing more
+than just pretty-printing a list of detected devices.
